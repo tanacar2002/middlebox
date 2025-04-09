@@ -20,6 +20,7 @@ services:
     - INSECURENET_GATEWAY=${INSECURENET_GATEWAY}
     - SECURENET_HOST_IP=${SECURENET_HOST_IP}
     - INSECURENET_HOST_IP=${INSECURENET_HOST_IP}
+    - AES_KEY=${AES_KEY}
     privileged: true
     cap_add:
     - NET_ADMIN
@@ -114,6 +115,7 @@ services:
     - INSECURENET_GATEWAY=${INSECURENET_GATEWAY}
     - SECURENET_HOST_IP=${SECURENET_HOST_IP}
     - INSECURENET_HOST_IP=${INSECURENET_HOST_IP}
+    - AES_KEY=${AES_KEY}
     privileged: true
     cap_add:
     - NET_ADMIN

@@ -5,6 +5,14 @@ RUN apt update -y && apt upgrade -y && apt install -y systemd tshark jq iputils-
 
 RUN echo 'net.ipv4.ip_forward=0' >> /etc/sysctl.conf && sysctl -p
 
-RUN apt update && apt install -y python3 python3-pip build-essential cmake libpcap-dev  vim 
+RUN apt update && apt install -y python3 python3-pip build-essential cmake libpcap-dev vim python3-venv
+
+ENV VIRTUAL_ENV=/opt/venv
+RUN python3 -m venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+RUN pip install --upgrade pip && pip install scapy nats-py cryptography
+
+RUN echo "source /opt/venv/bin/activate" >> ~/.bashrc
 
 WORKDIR /code/sec
