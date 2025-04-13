@@ -1,4 +1,4 @@
-import os, sys, socket, time, struct, argparse
+import os, sys, socket, time, struct, argparse, hashlib
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from scapy.all import *
@@ -12,6 +12,7 @@ SEND = []
 SENT = []
 RESEND = []
 ackCount = 0
+done = False
 
 class ICMP:
     _type = 0
@@ -19,7 +20,7 @@ class ICMP:
     _checksum = 0
     _comm_id = 0
     _icmp_seq = 0
-    _data = b'' #Max Payload 1472 bytes
+    _data = b'' #Max Payload 1472 bytes, 1471 encrypted bytes + 1 padding byte
 
     def __init__(self, packetbytes:bytes=b''):
         if len(packetbytes) >= 8:
@@ -108,7 +109,7 @@ def covert_sender(address:str, verbose:int, noAck):
         print("INSECURENET_HOST_IP environment variable is not set.")
         return
     
-    while True:
+    while not done:
         # Send message to the server
         if SEND:
             toBeSent = SEND.pop(0)
@@ -123,7 +124,7 @@ def covert_ack(address:str, verbose:int):
     if not address:
         print("INSECURENET_HOST_IP environment variable is not set.")
         return
-    while True:
+    while not done:
         response, server = sock.recvfrom(4096)
         server = server[0]
         if server == address:
@@ -147,13 +148,18 @@ def covert_ack(address:str, verbose:int):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("covert_sender.py", description="Sends covert ICMP packets, encrypted with AES256.")
     parser.add_argument("-s","--size", 
-                        help="size of message in bytes, in the packet it will be converted to upper multiple of 32 bytes, default is the message length",
+                        help="size of message in bytes, in the packet it will be converted to upper multiple of 32 bytes, default is the message length, maximum is 1471 bytes",
                         metavar="size",
                         type=int)
     parser.add_argument("-i","--interval", 
                         help="seconds between sending each packet",
                         default=1.0,
                         metavar="interval",
+                        type=float)
+    parser.add_argument("-d","--duration", 
+                        help="seconds of duration of the program, default is infinite",
+                        default=float('inf'),
+                        metavar="duration",
                         type=float)
     parser.add_argument("-m","--message", 
                         help="string message to be sent",
@@ -179,9 +185,9 @@ if __name__ == "__main__":
                         help="increase output verbosity")
     args = parser.parse_args()
     if args.size:
-        size = min(args.size, 1472)
+        size = min(args.size, 1471)
     else:
-        size = min(len(args.message), 1472)
+        size = min(len(args.message), 1471)
     proxy = os.getenv('INSECURENET_HOST_IP')
 
     try:
@@ -195,17 +201,25 @@ if __name__ == "__main__":
         msg = args.message.encode()
         msg = msg * ((1472 + len(msg) - 1) // len(msg)) # max payload size is 1472 bytes
         startTime = time.time()
-        while True:
+        while not done:
             outpacket = ICMP()
             outpacket.setId(519)
             outpacket.setType(True)
             outpacket.setSeq(i)
             outpacket.setEncryptedData(msg[:size])
             SEND.append(outpacket)
+            if time.time() - startTime > args.duration:
+                done = True
+                break
             while len(SENT) > args.buffersize and not args.noAck:
-                pass
+                if time.time() - startTime > args.duration:
+                    done = True
+                    break
             i += 1
             time.sleep(args.interval)
+        xSender.join()
+        if not args.noAck:
+            xACK.join()
     except KeyboardInterrupt as e:
         pass
     except Exception as e:
@@ -215,9 +229,9 @@ if __name__ == "__main__":
         print(f"Time elapsed: {endTime - startTime:.03f} seconds")
         if args.noAck:
             print(f"Transmitted data: {i * size} bytes")
-            print(f"Average throughput: {i * size * 8 / (endTime - startTime) / 1000:.03f} kbps")
+            print(f"Average throughput: {(i * size * 8 / (endTime - startTime)) / 1000:.03f} kbps")
         else:
             print(f"Acked transmitted data: {ackCount * size} bytes")
-            print(f"Average throughput: {ackCount * size * 8 / (endTime - startTime) / 1000:.03f} kbps")
+            print(f"Average throughput: {(ackCount * size * 8 / (endTime - startTime)) / 1000:.03f} kbps")
         sock.close()
     #covert_sender(args.message.encode(), size, args.interval, args.verbose)
