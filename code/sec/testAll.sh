@@ -6,9 +6,9 @@ do
     LINE+="["
     for s in 31 63 127 255 511 1023 1471
     do
-        LINE+="$(./testN.sh 50 $@ -d 1 -i $i -s $s), \n"
+        LINE+="$(./testN.sh 50 $@ -d 1 -i $i -s $s), "
     done
-    LINE+="], \n"
+    LINE+="], "
 done
 LINE+="]"
 
