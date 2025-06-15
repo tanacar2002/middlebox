@@ -104,6 +104,19 @@ class ICMP:
     def __str__(self):
         return f"[ICMP]\n\rtype: {self._type}\n\rid: {self._comm_id}\n\rseq: {self._icmp_seq}\n\rdata: {self._data}"
 
+def bytes2int(in_bytes: bytes) -> int:
+    return sum([b << (i*8) for i,b in enumerate(in_bytes)])
+
+def int2bytes(in_int: int, num_bytes: int = 8) -> bytes: 
+    return bytes([(in_int >> (i*8))&0xff for i in range(num_bytes)])
+
+def getCovertTimeval(covert_bytes: bytes, timeval_bytes: bytes, covertbitcount: int, covertbitcountinusec: int) -> bytes:
+    _covertbitcountinsec = covertbitcount - covertbitcountinusec
+    sec_covert_bytes = int2bytes(bytes2int(covert_bytes) >> covertbitcountinusec, 8)
+    usec_bytes = bytes([(timeval_bytes[8+i]&(0xff << max(min(covertbitcountinusec - i*8, 8), 0)))|(covert_bytes[i]&~(0xff << max(min(covertbitcountinusec - i*8, 8), 0))) for i in range(8)])
+    sec_bytes = bytes([(timeval_bytes[i]&(0xff << max(min(_covertbitcountinsec - i*8, 8), 0)))|(sec_covert_bytes[i]&~(0xff << max(min(_covertbitcountinsec - i*8, 8), 0))) for i in range(8)])
+    return sec_bytes + usec_bytes
+
 def covert_sender(address:str, verbose:int, noAck):
     if not address:
         print("INSECURENET_HOST_IP environment variable is not set.")
@@ -114,8 +127,7 @@ def covert_sender(address:str, verbose:int, noAck):
         if SEND:
             toBeSent = SEND.pop(0)
             sock.sendto(toBeSent.getPacket(), (address, 0))
-            if not noAck:
-                SENT.append((toBeSent, time.time()))
+            SENT.append((toBeSent, time.time()))
             if verbose:
                 print(f"Message {toBeSent.getSeq()} sent to {address}")
 
@@ -143,12 +155,15 @@ def covert_ack(address:str, verbose:int):
                     print(inpacket)
         for idx in range(len(SENT)-1,-1,-1):
             if time.time()-SENT[idx][1] > 0.7:
-                SEND.append(SENT.pop(idx)[0])
+                if args.noAck:
+                    SENT.pop(idx)
+                else:
+                    SEND.append(SENT.pop(idx)[0])
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser("covert_sender.py", description="Sends covert ICMP packets, encrypted with AES256.")
+    parser = argparse.ArgumentParser("covert_sender_v2.py", description="Sends covert ICMP packets, encoded in timestamp.")
     parser.add_argument("-s","--size", 
-                        help="size of message in bytes, in the packet it will be converted to upper multiple of 16 bytes, default is the message length, maximum is 1471 bytes",
+                        help="size of covert message in bits, maximum is 84 bits, defaults to message length",
                         metavar="size",
                         type=int)
     parser.add_argument("-i","--interval", 
@@ -162,10 +177,13 @@ if __name__ == "__main__":
                         metavar="duration",
                         type=float)
     parser.add_argument("-m","--message", 
-                        help="string message to be sent",
-                        default='Hello from sec! ',
+                        help="string message to be sent, default is 'Hi Insec'",
+                        default='Hi Insec',
                         metavar="msg",
                         type=str)
+    parser.add_argument("-r","--random", 
+                        help="Send random bytes after first message",
+                        action="store_true")
     parser.add_argument("-b","--buffersize", 
                         help="max amount messages to be buffered",
                         default=64,
@@ -176,6 +194,11 @@ if __name__ == "__main__":
                         default=1.0,
                         metavar="time",
                         type=float)
+    parser.add_argument("-u","--usecbits", 
+                        help="size of covert bits used in usec field, maximum is 20 bits, default is 8 bits",
+                        default=8,
+                        metavar="size",
+                        type=int)
     parser.add_argument("-n","--noAck", 
                         help="to disable the acknowledgement mechanism",
                         action="store_true")
@@ -184,29 +207,34 @@ if __name__ == "__main__":
                         default=0,
                         help="increase output verbosity")
     args = parser.parse_args()
-    if args.size:
-        size = min(args.size, 1471)
+    if args.size is not None:
+        size = min(args.size, 84)
     else:
-        size = min(len(args.message), 1471)
+        size = min(len(args.message)*8, 84)
+    
     proxy = os.getenv('INSECURENET_HOST_IP')
-
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_ICMP)
         xSender = threading.Thread(target=covert_sender, args=(proxy, args.verbose, args.noAck), daemon=True)
         xACK = threading.Thread(target=covert_ack, args=(proxy, args.verbose), daemon=True)
         xSender.start()
-        if not args.noAck:
-            xACK.start()
+        xACK.start()
         i = 0
         msg = args.message.encode()
-        msg = msg * ((1472 + len(msg) - 1) // len(msg)) # max payload size is 1472 bytes
+        msg = msg * ((16 + len(msg) - 1) // len(msg))
+        pattern = bytes(range(16, 56))
         startTime = time.time()
         while not done:
             outpacket = ICMP()
             outpacket.setId(519)
             outpacket.setType(True)
             outpacket.setSeq(i)
-            outpacket.setEncryptedData(msg[:size])
+            nsecs = time.time_ns()
+            secs = nsecs // 1_000_000_000
+            usecs = (nsecs % 1_000_000_000) // 1000
+            timeval = struct.pack("<qq", secs, usecs)
+            payload = getCovertTimeval(msg, timeval, size, min(size, args.usecbits)) + pattern
+            outpacket.setData(payload)
             SEND.append(outpacket)
             if time.time() - startTime > args.duration:
                 done = True
@@ -215,6 +243,8 @@ if __name__ == "__main__":
                 if time.time() - startTime > args.duration:
                     done = True
                     break
+            if args.random:
+                msg = os.urandom(16)
             i += 1
             time.sleep(args.interval)
         xSender.join()
@@ -223,15 +253,12 @@ if __name__ == "__main__":
     except KeyboardInterrupt as e:
         pass
     except Exception as e:
-        print(f"An error occurred: {e}")
+        print(f"\nAn error occurred: {e}")
     finally:
         endTime = time.time()
-        print(f"Time elapsed: {endTime - startTime:.03f} seconds")
-        if args.noAck:
-            print(f"Transmitted data: {i * size} bytes")
-            print(f"Average throughput: {(i * size * 8 / (endTime - startTime)) / 1000:.03f} kbps")
-        else:
-            print(f"Acked transmitted data: {ackCount * size} bytes")
-            print(f"Average throughput: {(ackCount * size * 8 / (endTime - startTime)) / 1000:.03f} kbps")
+        print(f"\nTime elapsed: {endTime - startTime:.03f} seconds")
+        print(f"Transmitted data: {i * size} bits")
+        print(f"Acked transmitted data: {ackCount * size} bits")
+        print(f"Average throughput: {ackCount * size / (endTime - startTime)} bps")
         sock.close()
     #covert_sender(args.message.encode(), size, args.interval, args.verbose)

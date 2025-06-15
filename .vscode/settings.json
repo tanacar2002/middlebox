@@ -3,6 +3,7 @@
         "*.rst": "restructuredtext",
         "udp.h": "c",
         "ip.h": "c",
-        "inet.h": "c"
+        "inet.h": "c",
+        "time.h": "c"
     }
 }

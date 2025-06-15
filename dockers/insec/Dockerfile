@@ -14,5 +14,6 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 RUN pip install --upgrade pip && pip install scapy nats-py cryptography
 
 RUN echo "source /opt/venv/bin/activate" >> ~/.bashrc
+RUN echo "python3 covert_receiver_v2.py -s 8" >> /root/.bash_history
 
 WORKDIR /code/insec
